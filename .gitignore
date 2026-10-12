@@ -27,14 +27,15 @@ backend/.venv/
 backend/venv/
 
 # Pacotes e builds Python
-build/
+/build/
 develop-eggs/
-dist/
+/dist/
 downloads/
 eggs/
 .eggs/
-lib/
-lib64/
+/lib/
+/lib64/
+!frontend/src/lib/
 parts/
 sdist/
 var/
