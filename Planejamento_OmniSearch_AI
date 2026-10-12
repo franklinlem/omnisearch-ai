@@ -1,0 +1,1026 @@
+# Planejamento Arquitetural e Guia de Implementação: OmniSearch AI
+
+> **Plataforma Web Fullstack de Busca Semântica Multimodal Imagem-Texto com SigLIP**  
+> **Baseado no Prompt:** Engenharia de IA & Busca Multimodal: Recuperação Cruzada Imagem-Texto com SigLIP no FastAPI  
+> **Repositório GitHub Sugerido:** `omnisearch-ai` (ou `siglip-multimodal-engine`)  
+> **Licença:** MIT | **Status:** Especificação Completa para Desenvolvimento
+
+---
+
+## 1\. Visão Geral e Proposta de Valor no GitHub
+
+### 1.1 O Desafio Técnico
+
+Mecanismos de busca tradicionais em e-commerces, bancos de imagens e catálogos de produtos dependem quase que exclusivamente de correspondência exata de palavras-chave (*keyword search* via Elasticsearch ou SQL `LIKE`). Quando um cliente pesquisa *"vestido floral fresco para casamento ao ar livre"* ou envia uma foto de um sapato visto no Instagram, sistemas legados falham porque:
+
+1. O texto do anúncio muitas vezes não contém os termos exatos do usuário.  
+2. A imagem contém atributos visuais (estilo, padrão, caimento, iluminação) impossíveis de catalogar manualmente por completo.  
+3. Modelos anteriores como o CLIP original sofrem com a perda Softmax global, que dilui características finas em pares imagem-texto específicos.
+
+### 1.2 A Solução: OmniSearch AI
+
+O **OmniSearch AI** é uma aplicação web fullstack corporativa que implementa o modelo **SigLIP** (Sigmoid Loss for Language-Image Pre-training, da Google DeepMind) para projetar imagens e textos em um **espaço vetorial unificado compartilhado**. Isso permite:
+
+* **Busca Texto-para-Imagem:** O usuário digita uma descrição em linguagem natural e o sistema encontra imagens semanticamente alinhadas.  
+* **Busca Imagem-para-Imagem:** O usuário faz upload de uma foto ou tira foto pela webcam e o sistema encontra produtos com formato, paleta de cores e estilo idênticos.  
+* **Busca Híbrida Filtrada:** Combina similaridade de cosseno de visão computacional com filtros relacionais rígidos (faixa de preço, categoria, estoque) no PostgreSQL via extensão `pgvector`.  
+* **Zero Custo de API Externa:** Roda o modelo de visão localmente via PyTorch / Hugging Face com inferência ultrarrápida.
+
+---
+
+## 2\. Arquitetura Técnica do Sistema
+
+### 2.1 Diagrama de Fluxo e Componentes
+
+              \+-------------------------------------------------+
+
+              |        Usuário / Navegador Web (Next.js 15\)     |
+
+              |   (Input de Texto, Drag & Drop ou Webcam)       |
+
+              \+-------------------------------------------------+
+
+                                      |
+
+                         HTTP REST (JSON / Multipart)
+
+                                      v
+
+\+-------------------------------------------------------------------------------+
+
+|                        FASTAPI BACKEND CORE SERVICE                           |
+
+|                                                                               |
+
+|  \+---------------------------+       \+-------------------------------------+  |
+
+|  |     API Router & Auth     | \----\> |           SigLIP Engine             |  |
+
+|  |   (FastAPI / Pydantic v2) |       |  (Vision & Text Encoders \- 768d)    |  |
+
+|  \+---------------------------+       \+-------------------------------------+  |
+
+|               |                                         |                     |
+
+|               v                                         v                     |
+
+|  \+---------------------------+       \+-------------------------------------+  |
+
+|  |    Metadata Controller    |       |      Vector Storage & Search        |  |
+
+|  |   (Preço, Categoria, SKU) | \<---\> |       PostgreSQL 16 \+ pgvector      |  |
+
+|  \+---------------------------+       |      (Índice HNSW Cosine Similarity)|  |
+
+|                                      \+-------------------------------------+  |
+
+\+-------------------------------------------------------------------------------+
+
+### 2.2 Tecnologias e Frameworks Selecionados
+
+* **Backend:**  
+  * **Linguagem:** Python 3.12.  
+  * **Framework Web:** FastAPI (assíncrono, alta performance, documentação OpenAPI automática).  
+  * **Machine Learning / Visão:** `transformers` (Hugging Face) com o modelo `google/siglip-base-patch16-384` ou `open_clip_torch`, `torch`, `torchvision`, `pillow` (processamento de imagens).  
+  * **Banco de Dados & Vetores:** PostgreSQL 16 com extensão `pgvector` e driver assíncrono `asyncpg` \+ `SQLAlchemy 2.0`.  
+  * **Validação de Schemas:** Pydantic v2.  
+* **Frontend:**  
+  * **Framework:** Next.js 15 (App Router), React 19, TypeScript.  
+  * **Estilização & UI:** Tailwind CSS, componentes Radix UI (shadcn/ui), Lucide Icons.  
+  * **Gerenciamento de Estado & Requisições:** TanStack Query (React Query v5) com mutações otimistas e controle de upload.  
+  * **Captura de Mídia:** React Dropzone (para upload e arrastar imagens) e suporte nativo à MediaDevices API para busca via câmera.  
+* **Infraestrutura & DevOps:**  
+  * Dockerfile multi-stage com cache inteligente de modelos.  
+  * `docker-compose.yml` para subir toda a stack (PostgreSQL \+ pgvector, Backend, Frontend) com um único comando.  
+  * GitHub Actions para testes e validações automatizadas.
+
+---
+
+## 3\. Modelagem de Dados e Esquemas
+
+### 3.1 Esquema Relacional no PostgreSQL (`schema.sql`)
+
+\-- Habilita a extensão de busca vetorial
+
+CREATE EXTENSION IF NOT EXISTS vector;
+
+\-- Tabela de Categorias
+
+CREATE TABLE IF NOT EXISTS categories (
+
+    id SERIAL PRIMARY KEY,
+
+    name VARCHAR(100) UNIQUE NOT NULL,
+
+    slug VARCHAR(100) UNIQUE NOT NULL
+
+);
+
+\-- Tabela Principal de Itens do Catálogo
+
+CREATE TABLE IF NOT EXISTS catalog\_items (
+
+    id UUID PRIMARY KEY DEFAULT gen\_random\_uuid(),
+
+    title VARCHAR(200) NOT NULL,
+
+    description TEXT NOT NULL,
+
+    price NUMERIC(10, 2\) NOT NULL,
+
+    category\_id INTEGER REFERENCES categories(id) ON DELETE SET NULL,
+
+    image\_url TEXT NOT NULL,
+
+    thumbnail\_url TEXT,
+
+    \-- Vetor de 768 dimensões gerado pelo SigLIP-base
+
+    embedding vector(768) NOT NULL,
+
+    metadata JSONB NOT NULL DEFAULT '{}',
+
+    is\_active BOOLEAN NOT NULL DEFAULT TRUE,
+
+    created\_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+    updated\_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+
+);
+
+\-- Índice HNSW para busca vetorial de altíssima performance por similaridade de cosseno
+
+CREATE INDEX IF NOT EXISTS idx\_catalog\_items\_embedding\_hnsw 
+
+ON catalog\_items USING hnsw (embedding vector\_cosine\_ops)
+
+WITH (m \= 16, ef\_construction \= 64);
+
+\-- Índices relacionais convencionais para filtros combinados
+
+CREATE INDEX IF NOT EXISTS idx\_catalog\_items\_category ON catalog\_items(category\_id);
+
+CREATE INDEX IF NOT EXISTS idx\_catalog\_items\_price ON catalog\_items(price);
+
+CREATE INDEX IF NOT EXISTS idx\_catalog\_items\_created\_at ON catalog\_items(created\_at);
+
+\-- Tabela de Logs de Telemetria de Busca
+
+CREATE TABLE IF NOT EXISTS search\_telemetry (
+
+    id UUID PRIMARY KEY DEFAULT gen\_random\_uuid(),
+
+    search\_type VARCHAR(20) NOT NULL, \-- 'TEXT' ou 'IMAGE'
+
+    query\_text TEXT,
+
+    top\_score NUMERIC(5, 4),
+
+    results\_count INTEGER NOT NULL,
+
+    latency\_ms NUMERIC(8, 2\) NOT NULL,
+
+    created\_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+
+);
+
+### 3.2 Esquemas Pydantic v2 (`schemas.py`)
+
+from pydantic import BaseModel, Field, HttpUrl
+
+from typing import Optional, List, Dict, Any
+
+from uuid import UUID
+
+from datetime import datetime
+
+class ItemCreate(BaseModel):
+
+    title: str \= Field(..., min\_length=2, max\_length=200)
+
+    description: str \= Field(..., min\_length=5)
+
+    price: float \= Field(..., ge=0.0)
+
+    category\_id: Optional\[int\] \= None
+
+    metadata: Optional\[Dict\[str, Any\]\] \= Field(default\_factory=dict)
+
+class ItemResponse(BaseModel):
+
+    id: UUID
+
+    title: str
+
+    description: str
+
+    price: float
+
+    category\_id: Optional\[int\]
+
+    image\_url: str
+
+    thumbnail\_url: Optional\[str\]
+
+    similarity\_score: Optional\[float\] \= None
+
+    created\_at: datetime
+
+class TextSearchRequest(BaseModel):
+
+    query: str \= Field(..., min\_length=2, description="Texto descritivo para busca semântica")
+
+    top\_k: int \= Field(default=12, ge=1, le=50)
+
+    min\_score: float \= Field(default=0.20, ge=0.0, le=1.0)
+
+    category\_id: Optional\[int\] \= None
+
+    min\_price: Optional\[float\] \= None
+
+    max\_price: Optional\[float\] \= None
+
+class SearchResponse(BaseModel):
+
+    search\_type: str
+
+    query\_display: str
+
+    total\_results: int
+
+    execution\_time\_ms: float
+
+    items: List\[ItemResponse\]
+
+---
+
+## 4\. Estrutura do Repositório no GitHub
+
+omnisearch-ai/
+
+├── .github/
+
+│   └── workflows/
+
+│       ├── ci.yml                 \# Linting (Ruff), testes (Pytest) e typecheck
+
+│       └── docker-build.yml       \# Teste de compilação dos contêineres Docker
+
+├── backend/
+
+│   ├── app/
+
+│   │   ├── \_\_init\_\_.py
+
+│   │   ├── main.py                \# Inicialização do FastAPI e injeção de dependências
+
+│   │   ├── config.py              \# Configurações de ambiente (Pydantic Settings)
+
+│   │   ├── database.py            \# Conexão assíncrona SQLAlchemy e pool asyncpg
+
+│   │   ├── models/                \# Modelos ORM (Item, Category, Telemetry)
+
+│   │   │   ├── \_\_init\_\_.py
+
+│   │   │   └── catalog.py
+
+│   │   ├── schemas/               \# Schemas de validação Pydantic v2
+
+│   │   │   ├── \_\_init\_\_.py
+
+│   │   │   └── item\_schemas.py
+
+│   │   ├── services/
+
+│   │   │   ├── \_\_init\_\_.py
+
+│   │   │   ├── siglip\_service.py  \# Motor de inferência de visão e texto SigLIP
+
+│   │   │   └── search\_service.py  \# Consultas vetoriais combinadas no pgvector
+
+│   │   └── routers/
+
+│   │       ├── \_\_init\_\_.py
+
+│   │       ├── items.py           \# CRUD e upload de produtos
+
+│   │       └── search.py          \# Endpoints de busca textual e visual
+
+│   ├── tests/
+
+│   │   ├── \_\_init\_\_.py
+
+│   │   ├── conftest.py
+
+│   │   ├── test\_embeddings.py     \# Testes matemáticos dos vetores do SigLIP
+
+│   │   └── test\_search\_api.py     \# Testes de integração das rotas de busca
+
+│   ├── Dockerfile
+
+│   ├── pyproject.toml
+
+│   └── requirements.txt
+
+├── frontend/
+
+│   ├── src/
+
+│   │   ├── app/
+
+│   │   │   ├── layout.tsx
+
+│   │   │   ├── page.tsx           \# Catálogo e Barra de Busca Unificada
+
+│   │   │   └── admin/upload/      \# Painel de upload e ingestão de itens
+
+│   │   ├── components/
+
+│   │   │   ├── SearchBar.tsx      \# Barra com alternância entre Texto e Upload Visual
+
+│   │   │   ├── ImageDropzone.tsx  \# Área de arraste e captura por câmera
+
+│   │   │   ├── ProductGrid.tsx    \# Grade responsiva de itens com score de relevância
+
+│   │   │   ├── ProductCard.tsx    \# Cartão com indicador visual de similaridade
+
+│   │   │   └── FilterSidebar.tsx  \# Filtros de preço e categoria
+
+│   │   ├── lib/
+
+│   │   │   └── api.ts             \# Cliente de comunicação tipado
+
+│   │   └── hooks/
+
+│   │       └── useSearch.ts
+
+│   ├── Dockerfile
+
+│   ├── package.json
+
+│   └── tailwind.config.ts
+
+├── docker-compose.yml
+
+├── LICENSE (MIT)
+
+├── README.md                      \# Documentação completa, GIF demonstrativo e Quickstart
+
+└── .env.example
+
+---
+
+## 5\. Implementação Passo a Passo com Código-Fonte Chave
+
+### 5.1 Motor SigLIP de Inferência (`backend/app/services/siglip_service.py`)
+
+import io
+
+import torch
+
+import numpy as np
+
+from PIL import Image
+
+from transformers import AutoProcessor, AutoModel
+
+from typing import List, Union
+
+class SigLIPService:
+
+    def \_\_init\_\_(self, model\_name: str \= "google/siglip-base-patch16-384"):
+
+        self.device \= "cuda" if torch.cuda.is\_available() else ("mps" if torch.backends.mps.is\_available() else "cpu")
+
+        self.processor \= AutoProcessor.from\_pretrained(model\_name)
+
+        \# Carrega o modelo com meia precisão em GPU para máxima velocidade
+
+        dtype \= torch.float16 if self.device \!= "cpu" else torch.float32
+
+        self.model \= AutoModel.from\_pretrained(model\_name, torch\_dtype=dtype).to(self.device)
+
+        self.model.eval()
+
+    def embed\_text(self, text: str) \-\> np.ndarray:
+
+        """Gera embedding normalizado L2 de 768 dimensões para uma string de consulta."""
+
+        inputs \= self.processor(text=\[text\], return\_tensors="pt", padding=True).to(self.device)
+
+        with torch.no\_grad():
+
+            text\_features \= self.model.get\_text\_features(\*\*inputs)
+
+            \# Normalização L2 obrigatória para cálculo de similaridade de cosseno
+
+            text\_features \= text\_features / text\_features.norm(p=2, dim=-1, keepdim=True)
+
+            return text\_features.cpu().numpy()\[0\].astype(np.float32)
+
+    def embed\_image(self, image\_input: Union\[bytes, Image.Image\]) \-\> np.ndarray:
+
+        """Gera embedding normalizado L2 de 768 dimensões para uma imagem (bytes ou PIL Image)."""
+
+        if isinstance(image\_input, bytes):
+
+            image \= Image.open(io.BytesIO(image\_input)).convert("RGB")
+
+        else:
+
+            image \= image\_input.convert("RGB")
+
+        inputs \= self.processor(images=\[image\], return\_tensors="pt").to(self.device)
+
+        with torch.no\_grad():
+
+            image\_features \= self.model.get\_image\_features(\*\*inputs)
+
+            image\_features \= image\_features / image\_features.norm(p=2, dim=-1, keepdim=True)
+
+            return image\_features.cpu().numpy()\[0\].astype(np.float32)
+
+### 5.2 Serviço de Busca Vetorial com `pgvector` (`backend/app/services/search_service.py`)
+
+import time
+
+import numpy as np
+
+from typing import List, Optional
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from sqlalchemy import select, and\_
+
+from app.models.catalog import CatalogItem
+
+from app.schemas.item\_schemas import ItemResponse, SearchResponse
+
+class SearchService:
+
+    def \_\_init\_\_(self, session: AsyncSession):
+
+        self.session \= session
+
+    async def search\_by\_vector(
+
+        self,
+
+        query\_vector: np.ndarray,
+
+        top\_k: int \= 12,
+
+        min\_score: float \= 0.20,
+
+        category\_id: Optional\[int\] \= None,
+
+        min\_price: Optional\[float\] \= None,
+
+        max\_price: Optional\[float\] \= None,
+
+        search\_type: str \= "TEXT",
+
+        query\_display: str \= ""
+
+    ) \-\> SearchResponse:
+
+        start\_time \= time.perf\_counter()
+
+        \# No pgvector com métrica de cosseno:
+
+        \# cosine\_distance \= 1 \- cosine\_similarity
+
+        \# logo, cosine\_similarity \= 1 \- (embedding \<=\> query\_vector)
+
+        similarity\_expr \= (1 \- CatalogItem.embedding.cosine\_distance(query\_vector.tolist())).label("similarity")
+
+        conditions \= \[CatalogItem.is\_active \== True\]
+
+        if category\_id:
+
+            conditions.append(CatalogItem.category\_id \== category\_id)
+
+        if min\_price is not None:
+
+            conditions.append(CatalogItem.price \>= min\_price)
+
+        if max\_price is not None:
+
+            conditions.append(CatalogItem.price \<= max\_price)
+
+        stmt \= (
+
+            select(CatalogItem, similarity\_expr)
+
+            .where(and\_(\*conditions))
+
+            .order\_by(CatalogItem.embedding.cosine\_distance(query\_vector.tolist()))
+
+            .limit(top\_k)
+
+        )
+
+        result \= await self.session.execute(stmt)
+
+        rows \= result.all()
+
+        items \= \[\]
+
+        for item, sim in rows:
+
+            sim\_float \= float(sim)
+
+            if sim\_float \>= min\_score:
+
+                item\_dict \= {
+
+                    "id": item.id,
+
+                    "title": item.title,
+
+                    "description": item.description,
+
+                    "price": float(item.price),
+
+                    "category\_id": item.category\_id,
+
+                    "image\_url": item.image\_url,
+
+                    "thumbnail\_url": item.thumbnail\_url,
+
+                    "similarity\_score": round(sim\_float, 4),
+
+                    "created\_at": item.created\_at
+
+                }
+
+                items.append(ItemResponse(\*\*item\_dict))
+
+        elapsed\_ms \= (time.perf\_counter() \- start\_time) \* 1000
+
+        return SearchResponse(
+
+            search\_type=search\_type,
+
+            query\_display=query\_display,
+
+            total\_results=len(items),
+
+            execution\_time\_ms=round(elapsed\_ms, 2),
+
+            items=items
+
+        )
+
+### 5.3 Rotas FastAPI (`backend/app/routers/search.py`)
+
+from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.database import get\_db
+
+from app.services.siglip\_service import SigLIPService
+
+from app.services.search\_service import SearchService
+
+from app.schemas.item\_schemas import TextSearchRequest, SearchResponse
+
+from typing import Optional
+
+router \= APIRouter(prefix="/api/v1/search", tags=\["Search"\])
+
+\# Instância única do modelo em memória compartilhada
+
+siglip\_singleton \= SigLIPService()
+
+def get\_siglip():
+
+    return siglip\_singleton
+
+@router.post("/text", response\_model=SearchResponse)
+
+async def search\_by\_text(
+
+    payload: TextSearchRequest,
+
+    db: AsyncSession \= Depends(get\_db),
+
+    siglip: SigLIPService \= Depends(get\_siglip)
+
+):
+
+    query\_vector \= siglip.embed\_text(payload.query)
+
+    search\_service \= SearchService(db)
+
+    return await search\_service.search\_by\_vector(
+
+        query\_vector=query\_vector,
+
+        top\_k=payload.top\_k,
+
+        min\_score=payload.min\_score,
+
+        category\_id=payload.category\_id,
+
+        min\_price=payload.min\_price,
+
+        max\_price=payload.max\_price,
+
+        search\_type="TEXT",
+
+        query\_display=payload.query
+
+    )
+
+@router.post("/image", response\_model=SearchResponse)
+
+async def search\_by\_image(
+
+    file: UploadFile \= File(...),
+
+    top\_k: int \= Form(12),
+
+    min\_score: float \= Form(0.20),
+
+    category\_id: Optional\[int\] \= Form(None),
+
+    min\_price: Optional\[float\] \= Form(None),
+
+    max\_price: Optional\[float\] \= Form(None),
+
+    db: AsyncSession \= Depends(get\_db),
+
+    siglip: SigLIPService \= Depends(get\_siglip)
+
+):
+
+    if not file.content\_type.startswith("image/"):
+
+        raise HTTPException(status\_code=400, detail="O arquivo enviado deve ser uma imagem válida.")
+
+    image\_bytes \= await file.read()
+
+    query\_vector \= siglip.embed\_image(image\_bytes)
+
+    search\_service \= SearchService(db)
+
+    return await search\_service.search\_by\_vector(
+
+        query\_vector=query\_vector,
+
+        top\_k=top\_k,
+
+        min\_score=min\_score,
+
+        category\_id=category\_id,
+
+        min\_price=min\_price,
+
+        max\_price=max\_price,
+
+        search\_type="IMAGE",
+
+        query\_display=file.filename
+
+    )
+
+### 5.4 Componente Frontend de Busca e Indicador de Similaridade (`frontend/src/components/ProductCard.tsx`)
+
+import React from "react";
+
+import Image from "next/image";
+
+import { Sparkles } from "lucide-react";
+
+interface ProductCardProps {
+
+  id: string;
+
+  title: string;
+
+  description: string;
+
+  price: number;
+
+  imageUrl: string;
+
+  similarityScore?: number;
+
+}
+
+export const ProductCard: React.FC\<ProductCardProps\> \= ({
+
+  title,
+
+  description,
+
+  price,
+
+  imageUrl,
+
+  similarityScore,
+
+}) \=\> {
+
+  const matchPercent \= similarityScore ? Math.round(similarityScore \* 100\) : null;
+
+  return (
+
+    \<div className="group relative bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-lg hover:border-indigo-500/50 transition-all duration-300 flex flex-col"\>
+
+      \<div className="relative w-full aspect-square bg-slate-950 overflow-hidden"\>
+
+        \<Image
+
+          src={imageUrl}
+
+          alt={title}
+
+          fill
+
+          className="object-cover group-hover:scale-105 transition-transform duration-500"
+
+          sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 25vw"
+
+        /\>
+
+        {matchPercent \!== null && (
+
+          \<div className="absolute top-3 right-3 bg-slate-950/80 backdrop-blur-md border border-indigo-500/40 px-2.5 py-1 rounded-full flex items-center gap-1.5 shadow-md"\>
+
+            \<Sparkles className="w-3.5 h-3.5 text-indigo-400 animate-pulse" /\>
+
+            \<span className="text-xs font-mono font-semibold text-indigo-200"\>
+
+              {matchPercent}% match
+
+            \</span\>
+
+          \</div\>
+
+        )}
+
+      \</div\>
+
+      \<div className="p-4 flex flex-col flex-grow justify-between"\>
+
+        \<div\>
+
+          \<h3 className="font-semibold text-slate-100 line-clamp-1 group-hover:text-indigo-400 transition-colors"\>
+
+            {title}
+
+          \</h3\>
+
+          \<p className="text-xs text-slate-400 line-clamp-2 mt-1"\>{description}\</p\>
+
+        \</div\>
+
+        \<div className="mt-4 flex items-center justify-between border-t border-slate-800/80 pt-3"\>
+
+          \<span className="text-sm font-mono font-bold text-slate-200"\>
+
+            R\$ {price.toFixed(2)}
+
+          \</span\>
+
+          \<button className="text-xs bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1.5 rounded-lg font-medium transition-colors"\>
+
+            Ver Detalhes
+
+          \</button\>
+
+        \</div\>
+
+      \</div\>
+
+    \</div\>
+
+  );
+
+};
+
+---
+
+## 6\. Docker & Orquestração para Produção
+
+### 6.1 `docker-compose.yml`
+
+version: '3.8'
+
+services:
+
+  db:
+
+    image: pgvector/pgvector:pg16
+
+    container\_name: omnisearch\_db
+
+    restart: unless-stopped
+
+    environment:
+
+      POSTGRES\_DB: omnisearch\_db
+
+      POSTGRES\_USER: postgres
+
+      POSTGRES\_PASSWORD: postgrespw
+
+    ports:
+
+      \- "5432:5432"
+
+    volumes:
+
+      \- pgdata:/var/lib/postgresql/data
+
+      \- ./backend/schema.sql:/docker-entrypoint-initdb.d/init.sql
+
+    healthcheck:
+
+      test: \["CMD-SHELL", "pg\_isready \-U postgres"\]
+
+      interval: 5s
+
+      timeout: 5s
+
+      retries: 5
+
+  backend:
+
+    build:
+
+      context: ./backend
+
+      dockerfile: Dockerfile
+
+    container\_name: omnisearch\_backend
+
+    restart: unless-stopped
+
+    depends\_on:
+
+      db:
+
+        condition: service\_healthy
+
+    environment:
+
+      DATABASE\_URL: postgresql+asyncpg://postgres:postgrespw@db:5432/omnisearch\_db
+
+      MODEL\_NAME: google/siglip-base-patch16-384
+
+    ports:
+
+      \- "8000:8000"
+
+  frontend:
+
+    build:
+
+      context: ./frontend
+
+      dockerfile: Dockerfile
+
+    container\_name: omnisearch\_frontend
+
+    restart: unless-stopped
+
+    environment:
+
+      NEXT\_PUBLIC\_API\_URL: http\://localhost:8000
+
+    ports:
+
+      \- "3000:3000"
+
+    depends\_on:
+
+      \- backend
+
+volumes:
+
+  pgdata:
+
+### 6.2 `backend/Dockerfile` Multi-Stage
+
+\# Estágio de build e download de dependências
+
+FROM python:3.12-slim AS builder
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install \-y \--no-install-recommends build-essential gcc git
+
+COPY requirements.txt .
+
+RUN pip install \--no-cache-dir \--user \-r requirements.txt
+
+\# Estágio final de execução enxuto
+
+FROM python:3.12-slim
+
+WORKDIR /app
+
+RUN useradd \-m \-u 1000 appuser && \\
+
+    apt-get update && apt-get install \-y \--no-install-recommends libgl1-mesa-glx && \\
+
+    rm \-rf /var/lib/apt/lists/\*
+
+COPY \--from=builder /root/.local /home/appuser/.local
+
+COPY . /app
+
+ENV PATH=/home/appuser/.local/bin:\$PATH
+
+USER appuser
+
+EXPOSE 8000
+
+CMD \["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"\]
+
+---
+
+## 7\. Estratégia de Testes Automatizados
+
+### Teste Unitário dos Vetores SigLIP (`backend/tests/test_embeddings.py`)
+
+import numpy as np
+
+import pytest
+
+from PIL import Image
+
+from app.services.siglip\_service import SigLIPService
+
+@pytest.fixture(scope="module")
+
+def siglip():
+
+    return SigLIPService()
+
+def test\_text\_embedding\_dimensions\_and\_norm(siglip):
+
+    vec \= siglip.embed\_text("sapato de couro marrom clássico")
+
+    assert vec.shape \== (768,)
+
+    \# Verifica se a normalização L2 resultou em magnitude unitária (1.0)
+
+    norm \= np.linalg.norm(vec)
+
+    assert np.isclose(norm, 1.0, atol=1e-4)
+
+def test\_image\_embedding\_dimensions\_and\_norm(siglip):
+
+    \# Cria uma imagem sintética RGB de 384x384
+
+    img \= Image.new("RGB", (384, 384), color="blue")
+
+    vec \= siglip.embed\_image(img)
+
+    assert vec.shape \== (768,)
+
+    norm \= np.linalg.norm(vec)
+
+    assert np.isclose(norm, 1.0, atol=1e-4)
+
+def test\_semantic\_alignment\_cross\_modal(siglip):
+
+    \# Uma imagem azul pura deve ter maior similaridade de cosseno com a palavra "blue" do que com "red"
+
+    img \= Image.new("RGB", (384, 384), color="blue")
+
+    img\_vec \= siglip.embed\_image(img)
+
+    text\_blue \= siglip.embed\_text("vibrant blue background")
+
+    text\_red \= siglip.embed\_text("bright red tomato")
+
+    sim\_blue \= np.dot(img\_vec, text\_blue)
+
+    sim\_red \= np.dot(img\_vec, text\_red)
+
+    assert sim\_blue \> sim\_red
+
+---
+
+## 8\. Checklist de Execução para Desenvolvimento
+
+- [ ] **Fase 1: Infraestrutura de Banco e Motor SigLIP**  
+      - Subir PostgreSQL com extensão `pgvector` e criar tabela `catalog_items` com índice HNSW.  
+      - Implementar e testar `SigLIPService` com cache de modelo local.  
+- [ ] **Fase 2: Rotas RESTful e Ingestão de Catálogo**  
+      - Implementar endpoints de cadastro de produto gerando o vetor da foto automaticamente no upload.  
+      - Implementar busca textual e busca por upload de foto com filtros de preço e categoria.  
+- [ ] **Fase 3: Interface Web Next.js 15**  
+      - Desenvolver a barra de pesquisa híbrida com botão de upload de foto e atalho de colar imagem (Clipboard API).  
+      - Criar a grade responsiva de produtos com os badges de porcentagem de match.  
+      - Adicionar gaveta lateral de filtros dinâmicos e modo claro/escuro com Tailwind.  
+- [ ] **Fase 4: Empacotamento para o GitHub**  
+      - Validar build com `docker compose up --build`.  
+      - Configurar workflow no GitHub Actions com Pytest e Ruff.  
+      - Redigir README atraente com GIFs demonstrativos e badges de projeto.
