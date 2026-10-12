@@ -171,11 +171,6 @@ async def seed_demo_data(
             await db.flush()
 
         for item_info in cat_data["items"]:
-            # Verifica se já existe
-            res_item = await db.execute(select(CatalogItem).where(CatalogItem.title == item_info["title"]))
-            if res_item.scalar_one_or_none():
-                continue
-
             # Gera imagem local
             img_url = create_demo_image(
                 title=item_info["title"],
@@ -184,12 +179,22 @@ async def seed_demo_data(
                 filename=item_info["filename"]
             )
 
-            # Gera embedding SigLIP para o item (combinando contexto da foto e texto)
+            # Gera embedding SigLIP multimodal para o item (combinando semântica textual e visual)
             local_img_path = os.path.join(settings.UPLOAD_DIR, item_info["filename"])
-            if os.path.exists(local_img_path):
-                img_vec = siglip.embed_image(local_img_path)
-            else:
-                img_vec = siglip.embed_text(f"{item_info['title']}. {item_info['description']}")
+            img_vec = siglip.embed_item(
+                title=item_info["title"],
+                description=item_info["description"],
+                image_input=local_img_path if os.path.exists(local_img_path) else None
+            )
+
+            # Verifica se já existe: se existir, atualiza o vetor e a imagem
+            res_item = await db.execute(select(CatalogItem).where(CatalogItem.title == item_info["title"]))
+            existing_item = res_item.scalar_one_or_none()
+            if existing_item:
+                existing_item.embedding = img_vec.tolist()
+                existing_item.image_url = img_url
+                existing_item.thumbnail_url = img_url
+                continue
 
             item = CatalogItem(
                 id=str(uuid.uuid4()),
@@ -208,7 +213,7 @@ async def seed_demo_data(
 
     await db.commit()
     return {
-        "message": f"Catálogo populado com sucesso! {total_created} novos produtos inseridos com vetores SigLIP.",
+        "message": f"Catálogo populado e vetores SigLIP atualizados com sucesso! ({total_created} novos itens criados).",
         "items_created": total_created
     }
 

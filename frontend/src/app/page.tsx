@@ -73,8 +73,8 @@ export default function HomePage() {
           </div>
         )}
 
-        {/* Banner para catálogo vazio */}
-        {!loading && catalogItems.length === 0 && !searchResults && (
+        {/* Banner para catálogo vazio ou Grade de Produtos */}
+        {!loading && catalogItems.length === 0 && !searchResults ? (
           <div className="max-w-md mx-auto text-center p-8 rounded-2xl bg-slate-900/50 border border-slate-800 space-y-3">
             <Database className="w-10 h-10 text-indigo-400 mx-auto opacity-70" />
             <h3 className="text-sm font-semibold text-slate-200">Catálogo Vazio</h3>
@@ -88,39 +88,38 @@ export default function HomePage() {
               Popular Demonstração Inicial
             </button>
           </div>
-        )}
-
-        {/* Layout Principal com Filtros Laterais e Grade de Produtos */}
-        <section className="flex flex-col lg:flex-row items-start gap-8">
-          <FilterSidebar
-            categories={categories}
-            filters={filters}
-            onFilterChange={setFilters}
-            onResetFilters={() =>
-              setFilters({
-                categoryId: null,
-                minPrice: null,
-                maxPrice: null,
-                minScore: 0.10,
-              })
-            }
-          />
-
-          <div className="flex-1 w-full relative">
-            {loading && (
-              <div className="absolute inset-0 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center z-20 rounded-2xl">
-                <Loader2 className="w-8 h-8 text-indigo-400 animate-spin" />
-              </div>
-            )}
-
-            <ProductGrid
-              items={displayItems}
-              searchResults={searchResults}
-              onClearSearch={clearSearch}
-              loading={loading}
+        ) : (
+          <section className="flex flex-col lg:flex-row items-start gap-8">
+            <FilterSidebar
+              categories={categories}
+              filters={filters}
+              onFilterChange={setFilters}
+              onResetFilters={() =>
+                setFilters({
+                  categoryId: null,
+                  minPrice: null,
+                  maxPrice: null,
+                  minScore: 0.10,
+                })
+              }
             />
-          </div>
-        </section>
+
+            <div className="flex-1 w-full relative">
+              {loading && (
+                <div className="absolute inset-0 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center z-20 rounded-2xl">
+                  <Loader2 className="w-8 h-8 text-indigo-400 animate-spin" />
+                </div>
+              )}
+
+              <ProductGrid
+                items={displayItems}
+                searchResults={searchResults}
+                onClearSearch={clearSearch}
+                loading={loading}
+              />
+            </div>
+          </section>
+        )}
       </main>
 
       {/* Rodapé */}

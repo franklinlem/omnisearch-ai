@@ -114,12 +114,12 @@ async def create_item(
         except Exception:
             pass
 
-    # Gera embedding multimodal SigLIP
-    if image_bytes:
-        embedding_vec = siglip.embed_image(image_bytes)
-    else:
-        # Fallback de texto se imagem remota não puder ser baixada
-        embedding_vec = siglip.embed_text(f"{title}. {description}")
+    # Gera embedding multimodal SigLIP combinando título, descrição e imagem
+    embedding_vec = siglip.embed_item(
+        title=title,
+        description=description,
+        image_input=image_bytes
+    )
 
     # Salva no banco de dados
     item_id = str(uuid.uuid4())

@@ -53,9 +53,18 @@ class SigLIPService:
         if self.is_loaded and self.model is not None and self.processor is not None:
             try:
                 import torch
-                inputs = self.processor(text=[text], return_tensors="pt", padding=True).to(self.device)
+                inputs = self.processor(
+                    text=[text],
+                    return_tensors="pt",
+                    padding="max_length",
+                    truncation=True
+                ).to(self.device)
                 with torch.no_grad():
                     text_features = self.model.get_text_features(**inputs)
+                    if hasattr(text_features, "pooler_output") and text_features.pooler_output is not None:
+                        text_features = text_features.pooler_output
+                    elif not isinstance(text_features, torch.Tensor):
+                        text_features = text_features[0]
                     # Normalização L2 obrigatória para similaridade de cosseno
                     text_features = text_features / text_features.norm(p=2, dim=-1, keepdim=True)
                     return text_features.cpu().numpy()[0].astype(np.float32)
@@ -79,6 +88,10 @@ class SigLIPService:
                 inputs = self.processor(images=[image], return_tensors="pt").to(self.device)
                 with torch.no_grad():
                     image_features = self.model.get_image_features(**inputs)
+                    if hasattr(image_features, "pooler_output") and image_features.pooler_output is not None:
+                        image_features = image_features.pooler_output
+                    elif not isinstance(image_features, torch.Tensor):
+                        image_features = image_features[0]
                     image_features = image_features / image_features.norm(p=2, dim=-1, keepdim=True)
                     return image_features.cpu().numpy()[0].astype(np.float32)
             except Exception as exc:
@@ -89,6 +102,24 @@ class SigLIPService:
         avg_colors = np.array(small).mean(axis=(0, 1))
         return self._fallback_embed(f"img:{avg_colors.tolist()}")
 
+    def embed_item(
+        self,
+        title: str,
+        description: str,
+        image_input: Optional[Union[bytes, Image.Image, str]] = None
+    ) -> np.ndarray:
+        """Gera embedding multimodal híbrido normalizado L2 combinando semântica textual e visual do produto."""
+        txt_vec = self.embed_text(f"{title}. {description}")
+        if image_input is not None:
+            try:
+                img_vec = self.embed_image(image_input)
+                combined = (0.65 * txt_vec + 0.35 * img_vec).astype(np.float32)
+                norm = float(np.linalg.norm(combined))
+                return combined / (norm if norm > 0 else 1.0)
+            except Exception as exc:
+                logger.warning(f"Falha ao combinar vetor visual do item ({exc}), utilizando vetor textual.")
+        return txt_vec
+
 # Singleton
 _siglip_instance = None
 
@@ -97,4 +128,5 @@ def get_siglip_service() -> SigLIPService:
     if _siglip_instance is None:
         _siglip_instance = SigLIPService()
     return _siglip_instance
+
 
