@@ -45,5 +45,14 @@ async def init_db():
                 logger.warning(f"Aviso ao inicializar extensão pgvector: {e}")
         from app.models import catalog  # noqa: F401
         await conn.run_sync(Base.metadata.create_all)
+        if is_postgres:
+            try:
+                await conn.execute(text("""
+                    CREATE INDEX IF NOT EXISTS idx_catalog_items_embedding_hnsw
+                    ON catalog_items USING hnsw (embedding vector_cosine_ops)
+                    WITH (m = 16, ef_construction = 64);
+                """))
+            except Exception as e:
+                logger.warning(f"Aviso ao criar índice HNSW pgvector: {e}")
         logger.info("Tabelas do banco de dados verificadas/criadas com sucesso.")
 
