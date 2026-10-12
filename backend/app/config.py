@@ -22,7 +22,7 @@ class Settings(BaseSettings):
 
     # Armazenamento de Imagens
     UPLOAD_DIR: str = "static/uploads"
-    BASE_URL: str = "http://localhost:8000"
+    BASE_URL: str = ""
 
     # CORS
     CORS_ORIGINS: List[str] = [

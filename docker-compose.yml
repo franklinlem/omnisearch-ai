@@ -28,7 +28,7 @@ services:
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://postgres:postgrespw@db:5432/omnisearch_db}
       MODEL_NAME: ${MODEL_NAME:-google/siglip-base-patch16-384}
-      BASE_URL: ${BASE_URL:-http://localhost:8000}
+      BASE_URL: ${BASE_URL:-}
     volumes:
       - uploads_data:/app/static/uploads
     ports:
@@ -42,7 +42,8 @@ services:
     depends_on:
       - backend
     environment:
-      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+      BACKEND_INTERNAL_URL: http://backend:8000
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-}
     ports:
       - "${FRONTEND_PORT:-3000}:3000"
 
